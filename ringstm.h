@@ -22,9 +22,8 @@
 // DEF METADATA
 #define COMPLETED 0
 #define WRITING 1
-#define COMMITTED 2
 
-#define BITS 1024
+#define BITS 256
 
 #define RING_SIZE 8
 
@@ -35,8 +34,7 @@ struct RingEntry {
   int status = COMPLETED;
 };
 
-volatile uint64_t global_clock =
-    0; // AKA ring_index / the end_index of the ring
+volatile uint64_t global_clock = 0;
 RingEntry ring[RING_SIZE];
 
 struct TX_EXCEPTION {};
@@ -62,7 +60,7 @@ public:
 
   int64_t tx_read(int64_t *address) {
     // Find the addr is in the write-set signature
-    if (writefilter.lookup(address)) {
+    if (writefilter.lookup(&address)) {
       // If found, find the addr is in the write-set & return the value buffered
       // in write-set
       return write_set[address];
@@ -122,7 +120,7 @@ public:
       // WAIT
     }
 
-    for (int i = end; i >= RV + 1; i--) {
+    for (uint64_t i = end; i > RV; i--) {
       int temp = i % 8;
       if (ring[temp].wf.intersect(&readfilter)) {
         tx_abort();
@@ -134,8 +132,8 @@ public:
     }
 
     // Rollover test (2)
-    uint64_t rollover_check_index = RV % 8;
-    if (ring[rollover_check_index].timestamp != RV) {
+    uint64_t rollover_check_index = (RV + 1) % 8;
+    if (ring[rollover_check_index].timestamp != (RV + 1)) {
       tx_abort();
     }
 
@@ -172,7 +170,7 @@ public:
 
     CFENCE;
     ring[new_index].status = WRITING;
-    ring[new_index].wf = writefilter;
+    ring[new_index].wf.fastcopy(&writefilter);
     ring[new_index].timestamp = commit_time + 1;
     CFENCE;
 

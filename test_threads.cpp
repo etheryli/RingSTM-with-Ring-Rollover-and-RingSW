@@ -1,22 +1,22 @@
-#include <signal.h>
-#include <pthread.h>
-#include <stdio.h>
+#include "rand_r_32.h"
+#include "ringstm.h"
 #include <ctype.h>
+#include <errno.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>
+#include <string>
 #include <sys/ipc.h>
 #include <sys/sem.h>
-#include <errno.h>
+#include <sys/types.h>
 #include <unistd.h>
-#include <string>
 #include <vector>
-#include "ringstm.h"
-#include "rand_r_32.h"
 
 #define MAX_ARRAY 1000000
 
-//volatile unsigned int global_clock = 0;
-std::vector<int64_t*> accounts;
+// volatile unsigned int global_clock = 0;
+std::vector<int64_t *> accounts;
 volatile int total_threads;
 volatile int total_accounts;
 volatile bool disjointed = false;
@@ -48,16 +48,13 @@ void barrier(int which) {
   CFENCE;
 }
 
-void
-signal_callback_handler(int signum) {
-   // Terminate program
-   exit(signum);
+void signal_callback_handler(int signum) {
+  // Terminate program
+  exit(signum);
 }
 
 volatile bool ExperimentInProgress = true;
-static void catch_SIGALRM(int sig_num) {
-    ExperimentInProgress = false;
-}
+static void catch_SIGALRM(int sig_num) { ExperimentInProgress = false; }
 
 /*********************
  **** th_run *********
@@ -109,8 +106,7 @@ void *th_run(void *args) {
 
         s->tx_begin();
         for (int i = 0; i < 10; i++) {
-          uint64_t fifty = 50;
-          if (s->tx_read(accounts[acc2[i]]) >= fifty) {
+          if (s->tx_read(accounts[acc2[i]]) >= 50) {
             s->tx_write(accounts[acc2[i]], s->tx_read(accounts[acc2[i]]) - 50);
             s->tx_write(accounts[acc1[i]], s->tx_read(accounts[acc1[i]]) + 50);
           }
@@ -125,9 +121,10 @@ void *th_run(void *args) {
     } while (again);
   }
   time = get_real_time() - time;
-    throughputs[id] = (1000000000LL * tx_count) / (time);
+  throughputs[id] = (1000000000LL * tx_count) / (time);
 
-  printf("This id is %d: commits = %d, aborts = %d\n", id, s->commits, s->aborts);
+  printf("This id is %ld: commits = %ld, aborts = %ld\n", id, s->commits,
+         s->aborts);
   delete s;
   return 0;
 }
@@ -137,10 +134,6 @@ void *th_run(void *args) {
  *******************/
 
 int main(int argc, char *argv[]) {
-  accounts.reserve(MAX_ARRAY);
-  for (int i = 0; i < MAX_ARRAY; i++) {
-    accounts.emplace_back(new int64_t(1000));
-  }
 
   signal(SIGINT, signal_callback_handler);
 
@@ -156,6 +149,11 @@ int main(int argc, char *argv[]) {
   if (total_accounts > MAX_ARRAY || total_accounts <= 0) {
     printf("total accounts out of range\n");
     exit(0);
+  }
+
+  accounts.resize(total_accounts);
+  for (int i = 0; i < total_accounts; i++) {
+    accounts[i] = new int64_t(1000);
   }
 
   if (argc == 4)
@@ -199,18 +197,17 @@ int main(int argc, char *argv[]) {
 
   // Throughputs total
   unsigned long long totalThroughput = 0;
-	for (int i=0; i<total_threads; i++) {
-		totalThroughput += throughputs[i];
-	}
+  for (int i = 0; i < total_threads; i++) {
+    totalThroughput += throughputs[i];
+  }
 
-	printf("\nThroughput = %llu\n", totalThroughput);
-
+  printf("\nThroughput = %llu\n", totalThroughput);
 
   printf("Final total balance for %d accounts: $%d\n", total_accounts,
          final_sum);
-  printf("Clock: %u\n", global_clock);
+  printf("Clock: %lu\n", global_clock);
 
-  for (int i = 0; i < MAX_ARRAY; i++) {
+  for (int i = 0; i < total_accounts; i++) {
     delete accounts[i];
   }
 
