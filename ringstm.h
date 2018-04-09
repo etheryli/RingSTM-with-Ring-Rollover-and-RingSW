@@ -101,22 +101,17 @@ public:
     uint64_t end = global_clock;
     CFENCE;
 
-    // Rollover check (2)
     uint64_t end_index = end % 8;
-    int rollover_check_index = RV % 8;
-    if (ring[rollover_check_index].timestamp != RV) {
-      tx_abort();
-    }
 
     // greater than expected Check (1)
     /*if (ring[end_index].timestamp > end) {
       tx_abort();
-    }*/
+    }
     for (int i = 0; i < RING_SIZE; i++) {
       if (ring[i].timestamp > end) {
         tx_abort();
       }
-    }
+    }*/
 
     // if Global -Clock == RV -> return
 
@@ -138,9 +133,16 @@ public:
       //WAIT
     }
 
+      // Rollover test (2)
+    uint64_t rollover_check_index = RV % 8;
+    if (ring[rollover_check_index].timestamp != RV) {
+      tx_abort();
+    }
+
     CFENCE;
     RV = end;
     CFENCE;
+
   }
 
   void tx_commit() {
