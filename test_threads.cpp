@@ -209,10 +209,14 @@ int main(int argc, char *argv[]) {
     sumAborts += total_aborts[i];
   }
 
-  unsigned long long CAratio = sumCommits / sumAborts;
+  double CAratio;
+  if (sumAborts != 0)
+    CAratio = double(sumCommits) / double(sumAborts);
+  else
+    CAratio = sumCommits;
 
   printf("\nThroughput = %llu\n", totalThroughput);
-  printf("Average Commit/Abort Ratio: %llu\n", CAratio);
+  printf("Average Commit/Abort Ratio: %f\n", CAratio);
 
   printf("Final total balance for %d accounts: $%d\n", total_accounts,
          final_sum);
