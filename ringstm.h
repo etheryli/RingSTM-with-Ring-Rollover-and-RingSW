@@ -23,7 +23,7 @@
 #define COMPLETED 0
 #define WRITING 1
 
-#define BITS 64
+#define BITS 4096
 
 #define RING_SIZE 8
 
@@ -155,8 +155,8 @@ public:
     }
 
     // Rollover test (2)
-    uint64_t rollover_check_index = (RV) % RING_SIZE;
-    if (ring[rollover_check_index].timestamp != (RV)) {
+    // uint64_t rollover_check_index = (RV) % RING_SIZE;
+    if (global_clock > (RV + RING_SIZE)) {
       tx_abort();
     }
 
