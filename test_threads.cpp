@@ -13,8 +13,6 @@
 #include <unistd.h>
 #include <vector>
 
-#define MAX_ARRAY 1000000
-
 // volatile unsigned int global_clock = 0;
 std::vector<int64_t *> accounts;
 volatile int total_threads;
@@ -150,7 +148,7 @@ int main(int argc, char *argv[]) {
 
   // Additional commandline argument for number of accounts and disjoint flag
   total_accounts = atoi(argv[2]);
-  if (total_accounts > MAX_ARRAY || total_accounts <= 0) {
+  if (total_accounts <= 0) {
     printf("total accounts out of range\n");
     exit(0);
   }

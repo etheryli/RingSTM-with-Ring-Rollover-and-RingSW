@@ -23,7 +23,7 @@
 #define COMPLETED 0
 #define WRITING 1
 
-#define BITS 1024
+#define BITS 64
 
 #define RING_SIZE 8
 
