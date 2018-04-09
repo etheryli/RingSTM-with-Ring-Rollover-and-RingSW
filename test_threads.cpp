@@ -1,152 +1,224 @@
-
-#include <pthread.h>
 #include <signal.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/sem.h>
-
-#include "rand_r_32.h"
-#include "ringstm.h"
-
 #include <errno.h>
+#include <unistd.h>
+#include <string>
+#include <vector>
+#include "ringstm.h"
+#include "rand_r_32.h"
 
-uint64_t* accountsAll;
-#define ACCOUT_NUM 1048576
+#define MAX_ARRAY 1000000
 
-int total_threads;
-/**
- *  Support a few lightweight barriers
- */
-void
-barrier(uint32_t which)
-{
-    static volatile uint32_t barriers[16] = {0};
-    CFENCE;
-    __sync_fetch_and_add(&barriers[which], 1);
-    while (barriers[which] != total_threads) { }
-    CFENCE;
+//volatile unsigned int global_clock = 0;
+std::vector<int64_t*> accounts;
+volatile int total_threads;
+volatile int total_accounts;
+volatile bool disjointed = false;
+
+unsigned long long throughputs[300];
+
+// Function to measure performance
+inline unsigned long long get_real_time() {
+  struct timespec time;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &time);
+
+  return time.tv_sec * 1000000000L + time.tv_nsec;
+}
+
+inline unsigned long long get_real_sec_time() {
+  struct timespec time;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &time);
+
+  return time.tv_sec;
+} // Returns something like 1231 seconds
+
+//  Support a few lightweight barriers
+void barrier(int which) {
+  static volatile int barriers[16] = {0};
+  CFENCE;
+  __sync_fetch_and_add(&barriers[which], 1);
+  while (barriers[which] != total_threads) {
+  }
+  CFENCE;
 }
 
 void
-signal_callback_handler(int signum)
-{
+signal_callback_handler(int signum) {
    // Terminate program
    exit(signum);
 }
 
 volatile bool ExperimentInProgress = true;
-static void catch_SIGALRM(int sig_num)
-{
+static void catch_SIGALRM(int sig_num) {
     ExperimentInProgress = false;
 }
 
-unsigned long long throughputs[300];
+/*********************
+ **** th_run *********
+ *********************/
 
-void* th_run(void * args)
-{
-	int id = ((long)args);
+void *th_run(void *args) {
+  long id = ((long)args);
 
-    uint64_t* accounts = accountsAll;
+  barrier(0);
 
-    thread_init(id);
+  // Divide the 100,000 transfers equally
+  int accounts_per_threads = total_accounts / total_threads;
+  int disjoint_min = id * accounts_per_threads;
 
-    barrier(0);
-	unsigned int seed = id;
+  if (!disjointed) {
+    disjoint_min = 0;
+    accounts_per_threads = total_accounts;
+  }
 
-	if (id == 0) {
-		signal(SIGALRM, catch_SIGALRM);
-		alarm(1);
-	}
+  // THROUGHPUT STUFF
+  unsigned int seed = id;
 
-	unsigned long long time = get_real_time();
-	int tx_count = 0;
-	while(ExperimentInProgress) {
-		int acc1[1000];
+  if (id == 0) {
+    signal(SIGALRM, catch_SIGALRM);
+    alarm(1);
+  }
 
-		int acc2[1000];
-		for (int j=0; j< 10; j++) {
-//				acc1[j] = (ACCOUT_NUM/total_threads)*id + rand_r_32(&seed) % (ACCOUT_NUM/total_threads);
-//				acc2[j] = (ACCOUT_NUM/total_threads)*id + rand_r_32(&seed) % (ACCOUT_NUM/total_threads);
-				acc1[j] = rand_r_32(&seed) % ACCOUT_NUM;
-				acc2[j] = rand_r_32(&seed) % ACCOUT_NUM;
-		}
+  unsigned long long time = get_real_time();
+  int tx_count = 0;
 
-		tx_count++;
-		TM_BEGIN
-			for (int j=0; j< 10; j++) {
-				TM_WRITE(accounts[acc1[j]], (TM_READ(accounts[acc1[j]]) + 50));
-				TM_WRITE(accounts[acc2[j]], (TM_READ(accounts[acc2[j]]) - 50));
-			}
-		TM_END
-	}
-	time = get_real_time() - time;
+  // Do 100,000/threads# transfers of 10 transfers each
+  // Make local STM
+  RingSW *s = new RingSW();
+  bool again = true;
+  while (ExperimentInProgress) {
+    int acc1[1000];
+    int acc2[1000];
+
+    // GENERATE RAND NUMBER OF ACCOUNTS
+    again = true;
+    do {
+      try {
+        for (int i = 0; i < 10; i++) {
+          acc1[i] = (rand_r_32(&seed) % accounts_per_threads) + disjoint_min;
+          acc2[i] = (rand_r_32(&seed) % accounts_per_threads) + disjoint_min;
+        }
+
+        tx_count++;
+
+        s->tx_begin();
+        for (int i = 0; i < 10; i++) {
+          uint64_t fifty = 50;
+          if (s->tx_read(accounts[acc2[i]]) >= fifty) {
+            s->tx_write(accounts[acc2[i]], s->tx_read(accounts[acc2[i]]) - 50);
+            s->tx_write(accounts[acc1[i]], s->tx_read(accounts[acc1[i]]) + 50);
+          }
+        }
+        s->tx_commit();
+        again = false;
+        s->commits++;
+      } catch (TX_EXCEPTION e) {
+        again = true;
+        s->aborts++;
+      }
+    } while (again);
+  }
+  time = get_real_time() - time;
     throughputs[id] = (1000000000LL * tx_count) / (time);
-    TM_TX_VAR
-	printf("%d: commits = %d, aborts = %d\n", id, tx->commits, tx->aborts);
-	return 0;
+
+  printf("This id is %d: commits = %d, aborts = %d\n", id, s->commits, s->aborts);
+  delete s;
+  return 0;
 }
 
-int main(int argc, char* argv[])
-{
-	signal(SIGINT, signal_callback_handler);
+/*******************
+ **** MAIN *********
+ *******************/
 
-	tm_sys_init();
+int main(int argc, char *argv[]) {
+  accounts.reserve(MAX_ARRAY);
+  for (int i = 0; i < MAX_ARRAY; i++) {
+    accounts.emplace_back(new int64_t(1000));
+  }
 
-	if (argc < 2) {
-		printf("Usage test threads#\n");
-		exit(0);
-	}
+  signal(SIGINT, signal_callback_handler);
 
-    int th_per_zone = atoi(argv[1]);
-	total_threads = th_per_zone? th_per_zone : 1;
+  if (argc < 3 || argc > 4) {
+    printf("Usage test <threads #> <accounts #> <-d>\n");
+    exit(0);
+  }
 
-	accountsAll = (uint64_t*) malloc(sizeof(uint64_t) * ACCOUT_NUM);
+  total_threads = atoi(argv[1]);
 
-	long initSum = 0;
-	for (int i=0; i<ACCOUT_NUM; i++) {
-		accountsAll[i] = 100;
-	}
-	for (int i=0; i<ACCOUT_NUM; i++) {
-		initSum += accountsAll[i];
-	}
-	printf("init sum = %d\n", initSum);
+  // Additional commandline argument for number of accounts and disjoint flag
+  total_accounts = atoi(argv[2]);
+  if (total_accounts > MAX_ARRAY || total_accounts <= 0) {
+    printf("total accounts out of range\n");
+    exit(0);
+  }
 
-	pthread_attr_t thread_attr;
-	pthread_attr_init(&thread_attr);
+  if (argc == 4)
+    disjointed = (std::string(argv[3]) == "-d");
 
-	pthread_t client_th[300];
-	int ids = 1;
-	for (int i = 1; i<th_per_zone; i++) {
-		pthread_create(&client_th[ids-1], &thread_attr, th_run, (void*)i);
-		ids++;
-	}
+  pthread_attr_t thread_attr;
+  pthread_attr_init(&thread_attr);
 
-	th_run(0);
+  pthread_t client_th[300];
+  long ids = 1;
+  for (int i = 1; i < total_threads; i++) {
+    pthread_create(&client_th[ids - 1], &thread_attr, th_run, (void *)ids);
+    ids++;
+  }
 
-	for (int i=0; i<ids-1; i++) {
-		pthread_join(client_th[i], NULL);
-	}
+  printf("Threads: %d created\n", total_threads);
 
-	unsigned long long totalThroughput = 0;
+  int start_sum = 0;
+  for (int i = 0; i < total_accounts; i++) {
+    start_sum += *accounts[i];
+  }
+
+  printf("Start total balance for %d accounts: $%d\n", total_accounts,
+         start_sum);
+
+  unsigned long long start = get_real_time();
+
+  th_run(0);
+
+  for (int i = 0; i < ids - 1; i++) {
+    pthread_join(client_th[i], NULL);
+  }
+
+  printf("Total time = %lld ns\n", get_real_time() - start);
+
+  // DEBUG for accounts changed
+  int final_sum = 0;
+  for (int i = 0; i < total_accounts; i++) {
+    final_sum += *accounts[i];
+  }
+
+  // Throughputs total
+  unsigned long long totalThroughput = 0;
 	for (int i=0; i<total_threads; i++) {
 		totalThroughput += throughputs[i];
 	}
 
 	printf("\nThroughput = %llu\n", totalThroughput);
 
-	long sum = 0;
-	int c=0;
-	for (int i=0; i<ACCOUT_NUM; i++) {
-		sum += accountsAll[i];
-		if (accountsAll[i] != 100) {
-			c++;
-		}
-	}
 
-	printf("\nsum = %d, matched = %d, changed %d\n", sum, sum == initSum, c);
+  printf("Final total balance for %d accounts: $%d\n", total_accounts,
+         final_sum);
+  printf("Clock: %u\n", global_clock);
 
-	return 0;
+  for (int i = 0; i < MAX_ARRAY; i++) {
+    delete accounts[i];
+  }
+
+  return 0;
 }
+
+// Build with
+// g++ FILE -o NAME -lpthread -std=c++11
+
+// run with: ( -d = disjoint flag)
+// NAME <threads #> <accounts #> <-d>
