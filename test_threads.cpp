@@ -22,6 +22,8 @@ volatile int total_accounts;
 volatile bool disjointed = false;
 
 unsigned long long throughputs[300];
+unsigned long long total_commits[300];
+unsigned long long total_aborts[300];
 
 // Function to measure performance
 inline unsigned long long get_real_time() {
@@ -122,6 +124,8 @@ void *th_run(void *args) {
   }
   time = get_real_time() - time;
   throughputs[id] = (1000000000LL * tx_count) / (time);
+  total_aborts[id] = s->aborts;
+  total_commits[id] = s->commits;
 
   printf("This id is %ld: commits = %ld, aborts = %ld\n", id, s->commits,
          s->aborts);
@@ -195,13 +199,20 @@ int main(int argc, char *argv[]) {
     final_sum += *accounts[i];
   }
 
-  // Throughputs total
+  // Throughputs total and ratio commits/aborts
   unsigned long long totalThroughput = 0;
+  unsigned long long sumCommits = 0;
+  unsigned long long sumAborts = 0;
   for (int i = 0; i < total_threads; i++) {
     totalThroughput += throughputs[i];
+    sumCommits += total_commits[i];
+    sumAborts += total_aborts[i];
   }
 
+  unsigned long long CAratio = sumCommits / sumAborts;
+
   printf("\nThroughput = %llu\n", totalThroughput);
+  printf("Average Commit/Abort Ratio: %llu\n", CAratio);
 
   printf("Final total balance for %d accounts: $%d\n", total_accounts,
          final_sum);
@@ -210,7 +221,6 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < total_accounts; i++) {
     delete accounts[i];
   }
-
   return 0;
 }
 
